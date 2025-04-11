@@ -25,6 +25,8 @@ import {
   Download,
   FileBarChart,
   Search,
+  FileDown,
+  Plus,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -41,6 +43,10 @@ import {
   SidebarGroup,
   SidebarGroupLabel,
 } from "@/components/ui/sidebar"
+import { PatientForm, type PatientFormData } from "@/components/patients/patient-form"
+import { PatientView } from "@/components/patients/patient-view"
+import { PatientHistory } from "@/components/patients/patient-history"
+import { exportAllPatientsToFHIR, downloadFHIRData } from "@/lib/fhir-export"
 
 // Types for our application
 interface AppUser {
@@ -54,18 +60,6 @@ interface AdminUser {
   role: "admin" | "superadmin" | "doctor" | "nurse" | "midwife"
   email: string
   createdAt: string
-}
-
-interface Patient {
-  id: string
-  name: string
-  age: number
-  phone: string
-  gestationWeeks: number
-  dueDate: string
-  riskLevel: "low" | "medium" | "high"
-  ancVisits: number
-  lastVisit: string
 }
 
 interface Appointment {
@@ -172,61 +166,96 @@ const initialAdminUsers: AdminUser[] = [
 ]
 
 // Sample patients data
-const samplePatients: Patient[] = [
+const samplePatients: PatientFormData[] = [
   {
     id: "P001",
     name: "Sarah Johnson",
     age: 28,
     phone: "+1234567890",
+    email: "sarah.j@example.com",
+    address: "123 Main St, Anytown, USA",
     gestationWeeks: 24,
     dueDate: "2023-12-15",
     riskLevel: "low",
     ancVisits: 3,
     lastVisit: "2023-06-10",
+    bloodType: "A+",
+    medicalHistory: "No significant medical history",
+    allergies: "None",
+    emergencyContact: "John Johnson",
+    emergencyPhone: "+1234567899",
   },
   {
     id: "P002",
     name: "Emily Davis",
     age: 32,
     phone: "+1234567891",
+    email: "emily.d@example.com",
+    address: "456 Oak Ave, Somewhere, USA",
     gestationWeeks: 36,
     dueDate: "2023-08-20",
     riskLevel: "medium",
     ancVisits: 5,
     lastVisit: "2023-07-05",
+    bloodType: "O+",
+    medicalHistory: "Gestational diabetes with previous pregnancy",
+    allergies: "Penicillin",
+    emergencyContact: "Michael Davis",
+    emergencyPhone: "+1234567898",
   },
   {
     id: "P003",
     name: "Maria Garcia",
     age: 25,
     phone: "+1234567892",
+    email: "maria.g@example.com",
+    address: "789 Pine St, Elsewhere, USA",
     gestationWeeks: 16,
     dueDate: "2024-01-30",
     riskLevel: "low",
     ancVisits: 2,
     lastVisit: "2023-06-28",
+    bloodType: "B+",
+    medicalHistory: "First pregnancy",
+    allergies: "None",
+    emergencyContact: "Carlos Garcia",
+    emergencyPhone: "+1234567897",
   },
   {
     id: "P004",
     name: "Jessica Wilson",
     age: 30,
     phone: "+1234567893",
+    email: "jessica.w@example.com",
+    address: "101 Maple Dr, Nowhere, USA",
     gestationWeeks: 32,
     dueDate: "2023-09-10",
     riskLevel: "high",
     ancVisits: 4,
     lastVisit: "2023-07-02",
+    bloodType: "AB-",
+    medicalHistory: "Previous preeclampsia, hypertension",
+    allergies: "Latex",
+    emergencyContact: "Robert Wilson",
+    emergencyPhone: "+1234567896",
   },
   {
     id: "P005",
     name: "Aisha Mohammed",
     age: 27,
     phone: "+1234567894",
+    email: "aisha.m@example.com",
+    address: "202 Cedar Ln, Anyplace, USA",
     gestationWeeks: 12,
     dueDate: "2024-02-25",
     riskLevel: "low",
     ancVisits: 1,
     lastVisit: "2023-07-01",
+    bloodType: "O-",
+    medicalHistory: "No significant medical history",
+    allergies: "None",
+    emergencyContact: "Hassan Mohammed",
+    emergencyPhone: "+1234567895",
   },
 ]
 
@@ -471,7 +500,7 @@ export default function AdminDashboard() {
     password: "",
     role: "admin",
   })
-  const [patients, setPatients] = useState<Patient[]>(samplePatients)
+  const [patients, setPatients] = useState<PatientFormData[]>(samplePatients)
   const [appointments, setAppointments] = useState<Appointment[]>(sampleAppointments)
   const [alerts, setAlerts] = useState<Alert[]>(sampleAlerts)
   const [medicineLogs, setMedicineLogs] = useState<MedicineLog[]>(sampleMedicineLogs)
@@ -480,6 +509,14 @@ export default function AdminDashboard() {
   const [stockItems, setStockItems] = useState<StockItem[]>(sampleStockItems)
   const [staffActivity, setStaffActivity] = useState<StaffActivity[]>(sampleStaffActivity)
   const [searchQuery, setSearchQuery] = useState("")
+
+  // Patient management states
+  const [showNewPatientForm, setShowNewPatientForm] = useState(false)
+  const [showPatientView, setShowPatientView] = useState(false)
+  const [showPatientEdit, setShowPatientEdit] = useState(false)
+  const [showPatientHistory, setShowPatientHistory] = useState(false)
+  const [selectedPatient, setSelectedPatient] = useState<PatientFormData | null>(null)
+  const [showExportConfirm, setShowExportConfirm] = useState(false)
 
   // Check if user is logged in
   useEffect(() => {
@@ -521,6 +558,51 @@ export default function AdminDashboard() {
 
   const isAdmin = () => {
     return currentUser?.role === "admin" || currentUser?.role === "superadmin"
+  }
+
+  // Patient management functions
+  const handleAddPatient = (patientData: PatientFormData) => {
+    const newPatient = {
+      ...patientData,
+      id: `P${String(patients.length + 1).padStart(3, "0")}`,
+    }
+    setPatients([...patients, newPatient])
+    setShowNewPatientForm(false)
+  }
+
+  const handleUpdatePatient = (patientData: PatientFormData) => {
+    if (!patientData.id) return
+
+    const updatedPatients = patients.map((patient) => (patient.id === patientData.id ? patientData : patient))
+    setPatients(updatedPatients)
+    setShowPatientEdit(false)
+
+    // Update the selected patient view if it's open
+    if (showPatientView) {
+      setSelectedPatient(patientData)
+    }
+  }
+
+  const handleViewPatient = (patient: PatientFormData) => {
+    setSelectedPatient(patient)
+    setShowPatientView(true)
+  }
+
+  const handleEditPatient = (patient: PatientFormData) => {
+    setSelectedPatient(patient)
+    setShowPatientEdit(true)
+    setShowPatientView(false)
+  }
+
+  const handleViewHistory = (patient: PatientFormData) => {
+    setSelectedPatient(patient)
+    setShowPatientHistory(true)
+  }
+
+  const handleExportAllPatients = () => {
+    const fhirBundle = exportAllPatientsToFHIR(patients)
+    downloadFHIRData(fhirBundle, "all-patients-fhir.json")
+    setShowExportConfirm(false)
   }
 
   if (!currentUser) {
@@ -2872,12 +2954,22 @@ export default function AdminDashboard() {
                 <div className="flex justify-between items-center mb-6">
                   <h3 className="text-lg font-medium">Patient Management</h3>
                   <div className="flex gap-2">
-                    <Button variant="outline" size="sm" className="flex items-center gap-1">
-                      <Download size={14} />
-                      <span>Export</span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex items-center gap-1"
+                      onClick={() => setShowExportConfirm(true)}
+                    >
+                      <FileDown size={14} />
+                      <span>Export FHIR</span>
                     </Button>
-                    <Button className="bg-[#00866a] hover:bg-[#00866a]/90" size="sm">
-                      <span>+ New Patient</span>
+                    <Button
+                      className="bg-[#00866a] hover:bg-[#00866a]/90"
+                      size="sm"
+                      onClick={() => setShowNewPatientForm(true)}
+                    >
+                      <Plus size={14} className="mr-1" />
+                      <span>New Patient</span>
                     </Button>
                   </div>
                 </div>
@@ -2918,7 +3010,7 @@ export default function AdminDashboard() {
                           (patient) =>
                             searchQuery === "" ||
                             patient.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                            patient.id.toLowerCase().includes(searchQuery.toLowerCase()),
+                            patient.id?.toLowerCase().includes(searchQuery.toLowerCase()),
                         )
                         .map((patient) => (
                           <tr key={patient.id}>
@@ -2943,13 +3035,28 @@ export default function AdminDashboard() {
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap text-sm">
                               <div className="flex gap-2">
-                                <Button variant="outline" size="sm" className="h-7 px-2 text-xs">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 px-2 text-xs"
+                                  onClick={() => handleViewPatient(patient)}
+                                >
                                   View
                                 </Button>
-                                <Button variant="outline" size="sm" className="h-7 px-2 text-xs">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 px-2 text-xs"
+                                  onClick={() => handleEditPatient(patient)}
+                                >
                                   Edit
                                 </Button>
-                                <Button variant="outline" size="sm" className="h-7 px-2 text-xs">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 px-2 text-xs"
+                                  onClick={() => handleViewHistory(patient)}
+                                >
                                   History
                                 </Button>
                               </div>
@@ -2980,6 +3087,63 @@ export default function AdminDashboard() {
           </main>
         </div>
       </div>
+
+      {/* Patient Forms and Dialogs */}
+      <PatientForm
+        open={showNewPatientForm}
+        onOpenChange={setShowNewPatientForm}
+        onSubmit={handleAddPatient}
+        mode="create"
+      />
+
+      {selectedPatient && (
+        <>
+          <PatientForm
+            open={showPatientEdit}
+            onOpenChange={setShowPatientEdit}
+            initialData={selectedPatient}
+            onSubmit={handleUpdatePatient}
+            mode="edit"
+          />
+
+          <PatientView
+            open={showPatientView}
+            onOpenChange={setShowPatientView}
+            patient={selectedPatient}
+            onEdit={() => {
+              setShowPatientView(false)
+              setShowPatientEdit(true)
+            }}
+            onViewHistory={() => {
+              setShowPatientView(false)
+              setShowPatientHistory(true)
+            }}
+          />
+
+          <PatientHistory open={showPatientHistory} onOpenChange={setShowPatientHistory} patient={selectedPatient} />
+        </>
+      )}
+
+      {/* Export Confirmation Dialog */}
+      <Dialog open={showExportConfirm} onOpenChange={setShowExportConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Export Patient Data</DialogTitle>
+          </DialogHeader>
+          <p className="py-4">
+            This will export all patient data in FHIR format. The exported file will contain sensitive patient
+            information. Are you sure you want to proceed?
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowExportConfirm(false)}>
+              Cancel
+            </Button>
+            <Button className="bg-[#00866a] hover:bg-[#00866a]/90" onClick={handleExportAllPatients}>
+              Export All Patients
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* New Admin Dialog */}
       <Dialog open={showNewAdminDialog} onOpenChange={setShowNewAdminDialog}>
